@@ -1,0 +1,53 @@
+Задание № 1:
+
+Для каждого дня в таблицах orders и user_actions рассчитайте следующие показатели:
+
+1. Выручку на пользователя (ARPU) за текущий день.
+2. Выручку на платящего пользователя (ARPPU) за текущий день.
+3. Выручку с заказа, или средний чек (AOV) за текущий день.
+4. Колонки с показателями назовите соответственно arpu, arppu, aov. Колонку с датами назовите date. 
+
+При расчёте всех показателей округляйте значения до двух знаков после запятой.
+Результат должен быть отсортирован по возрастанию даты. 
+Поля в результирующей таблице: date, arpu, arppu, aov
+
+Запрос: 
+
+WITH revenue AS (
+        SELECT DISTINCT date, count_orders,
+               SUM(price) OVER (PARTITION BY date) AS revenue
+        FROM (
+            SELECT creation_time :: DATE as date,
+                   order_id, UNNEST(product_ids) AS product_id
+            FROM orders
+            WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')) AS a
+        JOIN products AS p USING(product_id)
+        JOIN (
+            SELECT COUNT(DISTINCT order_id) AS count_orders,
+                   time:: date AS date
+            FROM user_actions
+            WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+            GROUP BY date) AS b USING(date)
+        ORDER BY date),
+        
+     all_users AS (
+        SELECT date, count_all_users, paying_users
+        FROM (
+            SELECT time::DATE AS date, 
+                   COUNT(DISTINCT user_id) AS count_all_users
+            FROM user_actions
+            GROUP BY date) AS c
+        JOIN (
+            SELECT time::DATE AS date, 
+                   COUNT(DISTINCT user_id) AS paying_users 
+            FROM user_actions
+            WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+            GROUP BY date) AS d USING(date))   
+        
+SELECT date, 
+       ROUND(revenue / count_all_users, 2) AS arpu,
+       ROUND(revenue / paying_users, 2) AS arppu,
+       ROUND(revenue / count_orders, 2) AS aov
+FROM revenue AS r
+JOIN all_users AS ua USING(date)
+ORDER BY date
