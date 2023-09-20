@@ -51,3 +51,184 @@ SELECT date,
 FROM revenue AS r
 JOIN all_users AS ua USING(date)
 ORDER BY date
+
+
+Задание № 2.
+
+Для каждого дня в таблицах orders и user_actions рассчитайте следующие показатели:
+
+1.Выручку, полученную в этот день.
+2.Выручку с заказов новых пользователей, полученную в этот день.
+3.Долю выручки с заказов новых пользователей в общей выручке, полученной за этот день.
+4.Долю выручки с заказов остальных пользователей в общей выручке, полученной за этот день.
+5.Колонки с показателями назовите соответственно revenue, new_users_revenue, new_users_revenue_share, old_users_revenue_share. Колонку с датами назовите date. 
+
+Все показатели долей необходимо выразить в процентах. При их расчёте округляйте значения до двух знаков после запятой.
+
+Результат должен быть отсортирован по возрастанию даты.
+
+Поля в результирующей таблице:
+date, revenue, new_users_revenue, new_users_revenue_share, old_users_revenue_share
+
+
+Запрос:
+
+WITH table_orders AS (
+        SELECT date, order_id, user_id, revenue_order, action,
+               RANK() OVER (PARTITION BY user_id ORDER BY date) AS rank_order
+        FROM (
+            SELECT DISTINCT date, order_id, user_id, action,
+                   SUM(price) OVER (PARTITION BY order_id) AS revenue_order
+            FROM (
+                SELECT creation_time :: date AS date, order_id, UNNEST(product_ids) AS product_id
+                FROM orders) AS a
+            LEFT JOIN products AS p USING(product_id)
+            LEFT JOIN user_actions AS ua USING(order_id)) AS b)
+
+SELECT date, revenue, new_users_revenue, 
+       ROUND(new_users_revenue / revenue :: decimal * 100, 2) AS new_users_revenue_share,
+       ROUND((revenue - new_users_revenue) / revenue :: decimal * 100, 2) AS old_users_revenue_share
+FROM (
+    SELECT DISTINCT date, 
+          SUM(revenue_order) OVER (PARTITION BY date) AS revenue,
+          (create_new_users_revenue - cancel_new_users_revenue) AS new_users_revenue
+    FROM  table_orders 
+    JOIN (SELECT DISTINCT date,
+                 SUM(revenue_order) FILTER(WHERE rank_order = 1 and action = 'create_order') OVER (PARTITION BY date)  AS create_new_users_revenue,
+                 SUM(revenue_order) FILTER(WHERE rank_order = 1 and action = 'cancel_order') OVER (PARTITION BY date) AS cancel_new_users_revenue
+          FROM table_orders) AS t USING(date)         
+    WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')) AS ee
+ORDER BY date
+
+
+Задание №3. 
+
+Для каждого дня в таблицах orders и courier_actions рассчитайте следующие показатели:
+
+1.Выручку, полученную в этот день.
+2.Затраты, образовавшиеся в этот день.
+3.Сумму НДС с продажи товаров в этот день.
+4.Валовую прибыль в этот день (выручка за вычетом затрат и НДС).
+5.Суммарную выручку на текущий день.
+6.Суммарные затраты на текущий день.
+7.Суммарный НДС на текущий день.
+8.Суммарную валовую прибыль на текущий день.
+9.Долю валовой прибыли в выручке за этот день (долю п.4 в п.1).
+10.Долю суммарной валовой прибыли в суммарной выручке на текущий день (долю п.8 в п.5).
+
+
+Колонку с датами назовите date.
+
+Долю валовой прибыли в выручке необходимо выразить в процентах, округлив значения до двух знаков после запятой.
+Результат должен быть отсортирован по возрастанию даты.
+
+Поля в результирующей таблице: date, revenue, costs, tax, gross_profit, total_revenue, total_costs, total_tax, total_gross_profit, gross_profit_ratio,total_gross_profit_ratio
+
+Чтобы посчитать затраты, в этой задаче введём дополнительные условия.
+В упрощённом виде затраты нашего сервиса будем считать как сумму постоянных и переменных издержек. К постоянным издержкам отнесём аренду складских помещений, а к переменным — стоимость сборки и доставки заказа. Таким образом, переменные затраты будут напрямую зависеть от числа заказов.
+
+Из данных, которые нам предоставил финансовый отдел, известно, что в августе 2022 года постоянные затраты составляли 120 000 рублей в день. Однако уже в сентябре нашему сервису потребовались дополнительные помещения, и поэтому постоянные затраты возросли до 150 000 рублей в день.
+Также известно, что в августе 2022 года сборка одного заказа обходилась нам в 140 рублей, при этом курьерам мы платили по 150 рублей за один доставленный заказ и ещё 400 рублей ежедневно в качестве бонуса, если курьер доставлял не менее 5 заказов в день. В сентябре продакт-менеджерам удалось снизить затраты на сборку заказа до 115 рублей, но при этом пришлось повысить бонусную выплату за доставку 5 и более заказов до 500 рублей, чтобы обеспечить более конкурентоспособные условия труда. При этом в сентябре выплата курьерам за один доставленный заказ осталась неизменной.
+
+Пояснение: 
+
+При расчёте переменных затрат учитывайте следующие условия:
+1. Затраты на сборку учитываются в том же дне, когда был оформлен заказ. Сборка отменённых заказов не производится.
+2. Выплата курьерам за доставленный заказ начисляется сразу же после его доставки, поэтому если курьер доставит заказ на следующий день, то и выплата будет учтена в следующем дне.
+3. Для получения бонусной выплаты курьерам необходимо доставить не менее 5 заказов в течение одного дня, поэтому если курьер примет 5 заказов в течение дня, но последний из них доставит после полуночи, бонусную выплату он не получит.
+При расчёте НДС учитывайте, что для некоторых товаров налог составляет 10%, а не 20%. Список товаров со сниженным НДС:
+'сахар', 'сухарики', 'сушки', 'семечки', 
+'масло льняное', 'виноград', 'масло оливковое', 
+'арбуз', 'батон', 'йогурт', 'сливки', 'гречка', 
+'овсянка', 'макароны', 'баранина', 'апельсины', 
+'бублики', 'хлеб', 'горох', 'сметана', 'рыба копченая', 
+'мука', 'шпроты', 'сосиски', 'свинина', 'рис', 
+'масло кунжутное', 'сгущенка', 'ананас', 'говядина', 
+'соль', 'рыба вяленая', 'масло подсолнечное', 'яблоки', 
+'груши', 'лепешка', 'молоко', 'курица', 'лаваш', 'вафли', 'мандарины'
+
+
+Запрос: 
+
+WITH revenue_tax AS (
+        SELECT date, revenue, tax,
+               SUM(revenue) OVER (ORDER BY date) AS total_revenue,
+               SUM(tax) OVER (ORDER BY date) AS total_tax
+        FROM (       
+            SELECT DISTINCT date, 
+                   SUM(price) OVER (PARTITION BY date) AS revenue,
+                   SUM(ROUND((price*nds) / (100 + nds), 2)) OVER (PARTITION BY date) AS tax
+            FROM (
+                SELECT date, order_id, product_id, price, name,
+                        CASE
+                            WHEN name IN (
+                            'сахар', 'сухарики', 'сушки', 'семечки', 'масло льняное', 'виноград', 'масло оливковое', 
+                            'арбуз', 'батон', 'йогурт', 'сливки', 'гречка', 'овсянка', 'макароны', 'баранина', 'апельсины', 
+                            'бублики', 'хлеб', 'горох', 'сметана', 'рыба копченая', 'мука', 'шпроты', 'сосиски', 'свинина', 'рис', 
+                            'масло кунжутное', 'сгущенка', 'ананас', 'говядина', 'соль', 'рыба вяленая', 'масло подсолнечное', 'яблоки', 
+                            'груши', 'лепешка', 'молоко', 'курица', 'лаваш', 'вафли', 'мандарины') THEN 10
+                           ELSE 20 
+                        END AS nds
+                FROM (
+                    SELECT creation_time :: date AS date, order_id, UNNEST(product_ids) AS product_id
+                    FROM orders
+                    WHERE order_id IN (SELECT order_id FROM courier_actions WHERE action = 'deliver_order')) AS a
+                JOIN products AS p USING(product_id)) AS c) AS d),
+
+     var_costs AS (
+    SELECT date, (count_accept_order * order_assembly_rate) AS order_assembly,
+           (count_deliver_order * courier_delivery_rate) AS payment_courier,
+           CASE
+                WHEN DATE_PART('month', date) = 8 THEN 120000
+                WHEN DATE_PART('month', date) = 9 THEN 150000
+                END AS fixed_costs
+    FROM (
+        SELECT time :: date AS date, COUNT(DISTINCT order_id) AS count_accept_order,
+               CASE
+                    WHEN DATE_PART('month', time) = 8 THEN 140
+                    WHEN DATE_PART('month', time) = 9 THEN 115
+                    END AS order_assembly_rate
+        FROM courier_actions 
+        WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order') and action = 'accept_order'
+        GROUP BY date, order_assembly_rate) AS a1     
+    JOIN (
+        SELECT time :: date AS date, COUNT(DISTINCT order_id) AS count_deliver_order, 150 AS courier_delivery_rate
+        FROM courier_actions
+        WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order') and action = 'deliver_order'
+        GROUP BY date) AS a2 USING(date)),
+
+    bonus_courier AS (
+        SELECT date, (count_couriers * bonus_courier) AS payment_bonus
+        FROM (
+            SELECT date, COUNT(courier_id) AS count_couriers, 
+                   CASE
+                        WHEN DATE_PART('month', date) = 8 THEN 400
+                        WHEN DATE_PART('month', date) = 9 THEN 500
+                        END AS bonus_courier
+            FROM (
+                SELECT time :: date AS date, courier_id, COUNT(DISTINCT order_id) AS count_orders
+                FROM courier_actions
+                WHERE action = 'deliver_order'
+                GROUP by date, courier_id
+                ORDER BY date) AS h
+            WHERE count_orders >= 5    
+            GROUP BY date) AS i
+        ORDER BY date),
+    
+    costs_table AS (
+    SELECT date, (fixed_costs + order_assembly + payment_courier + payment_bonus) AS costs
+    FROM (
+        SELECT date, fixed_costs, order_assembly, payment_courier, COALESCE(payment_bonus, 0) AS payment_bonus
+        FROM var_costs AS vc
+        LEFT JOIN bonus_courier AS bc USING(date)) AS hh
+    ORDER BY date)    
+        
+
+SELECT *, ROUND(gross_profit / revenue :: DECIMAL * 100, 2) AS gross_profit_ratio,
+       ROUND(total_gross_profit / total_revenue :: DECIMAL * 100, 2) AS total_gross_profit_ratio
+FROM (       
+    SELECT date, revenue, costs :: DECIMAL, tax, (revenue - costs - tax) AS gross_profit, total_revenue, 
+           SUM(costs) OVER (ORDER BY date) AS total_costs, total_tax,
+           SUM(revenue - costs - tax) OVER (ORDER BY date) AS total_gross_profit
+    FROM revenue_tax AS rt
+    JOIN costs_table AS c USING(date)) AS hh
